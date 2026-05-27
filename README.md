@@ -7,8 +7,9 @@ Codebase for the company. Bootstrapped per [COM-2](#).
 - TypeScript + Next.js 16 (App Router)
 - Tailwind CSS v4
 - ESLint (`eslint-config-next`)
+- Postgres via Drizzle ORM (`postgres-js` driver); managed on Supabase (free tier)
 - Deployed on Vercel; `main` auto-deploys
-- CI on GitHub Actions: typecheck + lint on every push and PR
+- CI on GitHub Actions: typecheck + lint + drizzle migration check on every push and PR
 
 ## Scripts
 
@@ -19,6 +20,9 @@ Codebase for the company. Bootstrapped per [COM-2](#).
 | `npm run start` | Run production build |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run db:generate` | Generate a new Drizzle migration from `src/lib/db/schema.ts` |
+| `npm run db:check` | Verify migration journal/snapshot consistency (runs in CI) |
+| `npm run db:migrate` | Apply pending migrations to `$DATABASE_URL` |
 
 ## Layout
 
@@ -27,15 +31,44 @@ src/app/             # App Router routes
 src/app/page.tsx
 src/app/layout.tsx
 src/app/api/debug/throw/route.ts  # deliberate-error endpoint for telemetry test
+src/app/api/items/route.ts        # GET/POST against the items table — smoke route for the data layer
 src/proxy.ts          # request/response JSON logs + x-request-id propagation
 src/instrumentation.ts # onRequestError + Node uncaughtException/unhandledRejection
 src/lib/logger.ts     # structured JSON logger used by app code
+src/lib/db/           # Drizzle schema + lazy client (getDb)
+drizzle/              # generated SQL migrations + snapshot/journal
+scripts/migrate.ts    # `npm run db:migrate` entrypoint
 public/              # static assets
 ```
 
 ## Deploy
 
 `main` is the production branch. Pushes deploy automatically to Vercel.
+
+## Database
+
+Managed Postgres on Supabase (free tier). All access goes through Drizzle ORM (`src/lib/db/`).
+
+### Connection string
+
+`DATABASE_URL` is the single env var the app reads. Use the **pooler** URL (Supabase Supavisor on port 6543, transaction mode) — the serverless runtime spins up many short-lived connections and the pooler is what survives that pattern. `src/lib/db/client.ts` already sets `prepare: false` for that reason.
+
+- **Local**: copy `.env.example` to `.env.local` and paste the pooler URL. `.env*` is gitignored.
+- **Vercel**: set `DATABASE_URL` in Project → Settings → Environment Variables for Production, Preview, and Development. Never paste it into code or commit it.
+- **CI**: not needed. `npm run db:check` is offline (validates the snapshot/journal); migrations only run in real environments via `npm run db:migrate`.
+
+If you ever spot a `DATABASE_URL` in a diff, stop and rotate the credential in Supabase before merging.
+
+### Migration workflow
+
+1. Edit `src/lib/db/schema.ts`.
+2. `npm run db:generate` — drizzle-kit writes a new SQL file under `drizzle/` and updates the snapshot/journal. Commit both the SQL and the meta files.
+3. `npm run db:check` — fails CI if the snapshot drifts from the schema; run locally before pushing.
+4. `DATABASE_URL=... npm run db:migrate` — applies pending migrations against the target env. Run before the first deploy that needs the new schema, then re-run on every env (preview, prod).
+
+### First table
+
+`items` (`id uuid pk`, `name text not null`, `created_at timestamptz default now()`) — placeholder per COM-3 until the v0 domain object is specified. Smoke route: `GET /api/items` lists, `POST /api/items {name}` inserts.
 
 ## Telemetry & logs
 

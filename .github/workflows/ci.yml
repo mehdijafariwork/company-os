@@ -29,3 +29,6 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Migration check
+        run: npm run db:check
